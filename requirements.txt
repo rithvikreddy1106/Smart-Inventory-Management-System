@@ -1,0 +1,8 @@
+mysql-connector-python==8.0.33
+python-dotenv==1.0.0
+customtkinter
+ttkthemes==3.2.2
+reportlab==4.0.4
+darkdetect==0.8.0
+packaging==24.2
+pillow==11.1.0
