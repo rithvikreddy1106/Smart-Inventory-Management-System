@@ -16,7 +16,7 @@ def create_connection():
             password=os.getenv('DB_PASSWORD', ''),
             database=os.getenv('DB_NAME', 'inventory_system')
         )
-        print("Connection to MySQL DB successful")
+        # Removed print statement to avoid console spam
     except Error as e:
         print(f"The error '{e}' occurred")
     
@@ -46,18 +46,45 @@ def create_database():
         cursor = connection.cursor()
         
         # Create users table first (no dependencies)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            full_name VARCHAR(100) NOT NULL,
-            email VARCHAR(100) UNIQUE NOT NULL,
-            password VARCHAR(255) NOT NULL,
-            phone_number VARCHAR(20),
-            user_type ENUM('customer', 'staff', 'admin') NOT NULL,
-            is_approved BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
+        # Check if table exists and has old schema (full_name column)
+        cursor.execute("SHOW TABLES LIKE 'users'")
+        table_exists = cursor.fetchone()
+        
+        if table_exists:
+            # Check if table has old schema (full_name) or new schema (first_name/last_name)
+            cursor.execute("SHOW COLUMNS FROM users LIKE 'full_name'")
+            has_full_name = cursor.fetchone()
+            
+            if has_full_name:
+                # Migrate old schema to new schema
+                try:
+                    cursor.execute("ALTER TABLE users ADD COLUMN first_name VARCHAR(100) AFTER id")
+                    cursor.execute("ALTER TABLE users ADD COLUMN last_name VARCHAR(100) AFTER first_name")
+                    # Split full_name into first_name and last_name
+                    cursor.execute("UPDATE users SET first_name = SUBSTRING_INDEX(full_name, ' ', 1), last_name = SUBSTRING_INDEX(full_name, ' ', -1) WHERE first_name IS NULL")
+                    cursor.execute("ALTER TABLE users MODIFY first_name VARCHAR(100) NOT NULL")
+                    cursor.execute("ALTER TABLE users MODIFY last_name VARCHAR(100) NOT NULL")
+                    # Drop old full_name column
+                    cursor.execute("ALTER TABLE users DROP COLUMN full_name")
+                    connection.commit()
+                    print("Database schema migrated successfully from full_name to first_name/last_name")
+                except Exception as e:
+                    print(f"Migration warning: {e}. Using existing schema.")
+        else:
+            # Create new table with new schema
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                first_name VARCHAR(100) NOT NULL,
+                last_name VARCHAR(100) NOT NULL,
+                email VARCHAR(100) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                phone_number VARCHAR(20),
+                user_type ENUM('customer', 'staff', 'admin') NOT NULL,
+                is_approved BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
         
         # Create categories table (no dependencies)
         cursor.execute("""
@@ -106,7 +133,7 @@ def create_database():
             id INT AUTO_INCREMENT PRIMARY KEY,
             customer_id INT NOT NULL,
             order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status ENUM('pending', 'processing', 'shipped', 'delivered', 'cancelled') DEFAULT 'pending',
+            status ENUM('pending', 'approved','rejected') DEFAULT 'pending',
             total_amount DECIMAL(10, 2) NOT NULL,
             shipping_address TEXT,
             FOREIGN KEY (customer_id) REFERENCES users(id) ON DELETE CASCADE
@@ -128,8 +155,8 @@ def create_database():
         
         # Insert default admin user
         cursor.execute("""
-        INSERT IGNORE INTO users (id, full_name, email, password, user_type, is_approved)
-        VALUES (1, 'Admin User', 'admin@inventory.com', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin', TRUE)
+        INSERT IGNORE INTO users (id, first_name, last_name, email, password, user_type, is_approved)
+        VALUES (1, 'Admin', 'User', 'admin@inventory.com', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin', TRUE)
         """)
         
         # Insert sample categories
@@ -196,5 +223,6 @@ def create_database():
             cursor.close()
             connection.close()
 
-if __name__ == "__main__":
-    create_database()
+# Note: Database creation is handled by db.py
+# This file (db_config.py) is for database connections only
+# Run 'python db.py' to create database and sample data

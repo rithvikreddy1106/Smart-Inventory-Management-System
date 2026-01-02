@@ -1,14 +1,22 @@
 import customtkinter as ctk
 from tkinter import messagebox, ttk
 import tkinter as tk
+from tkinter import filedialog
 from mysql.connector import Error
 import db_config
+import openpyxl
+from openpyxl.styles import Font, Alignment, PatternFill
+from datetime import datetime
 from datetime import datetime, timedelta
 
 class AdminDashboard:
     def __init__(self, parent, main_app):
         self.parent = parent
         self.main_app = main_app
+        
+        # Create persistent database connection
+        self.db_connection = None
+        self.get_db_connection()
         
         # Create main container
         self.container = ctk.CTkFrame(parent)
@@ -26,6 +34,43 @@ class AdminDashboard:
         
         # Show dashboard by default
         self.show_dashboard()
+    
+    def get_db_connection(self):
+        """Get or create database connection - reuse existing if available"""
+        if self.db_connection is None or not self.db_connection.is_connected():
+            try:
+                self.db_connection = db_config.create_connection()
+            except Error as e:
+                messagebox.showerror("Database Error", f"Failed to connect to database: {e}")
+                return None
+        return self.db_connection
+    
+    def execute_query(self, query, params=None, fetch=True, dictionary=False):
+        """Execute a database query with proper error handling"""
+        connection = self.get_db_connection()
+        if not connection:
+            return None
+        
+        try:
+            cursor = connection.cursor(dictionary=dictionary)
+            cursor.execute(query, params or ())
+            
+            if fetch:
+                result = cursor.fetchall()
+                cursor.close()
+                return result
+            else:
+                connection.commit()
+                cursor.close()
+                return True
+        except Error as e:
+            messagebox.showerror("Database Error", f"Query failed: {e}")
+            return None
+    
+    def __del__(self):
+        """Close database connection when dashboard is destroyed"""
+        if self.db_connection and self.db_connection.is_connected():
+            self.db_connection.close()
     
     def create_header(self):
         header_frame = ctk.CTkFrame(self.container, height=60)
@@ -107,12 +152,15 @@ class AdminDashboard:
         )
         title_label.pack(pady=20)
         
-        # Stats frame
+        # Stats frame with responsive grid layout
         stats_frame = ctk.CTkFrame(self.content_frame)
         stats_frame.pack(fill="x", padx=20, pady=20)
+        # Configure grid columns for responsive layout
+        for i in range(5):
+            stats_frame.grid_columnconfigure(i, weight=1, uniform="stats")
         
         try:
-            connection = db_config.create_connection()
+            connection = self.get_db_connection()
             if connection:
                 cursor = connection.cursor()
                 
@@ -137,14 +185,13 @@ class AdminDashboard:
                 total_revenue = cursor.fetchone()[0] or 0
                 
                 cursor.close()
-                connection.close()
                 
-                # Display stats
-                self.create_stat_card(stats_frame, "Total Users", total_users, "blue").pack(side="left", padx=20, pady=20, expand=True)
-                self.create_stat_card(stats_frame, "Pending Staff", pending_staff, "orange").pack(side="left", padx=20, pady=20, expand=True)
-                self.create_stat_card(stats_frame, "Total Products", total_products, "green").pack(side="left", padx=20, pady=20, expand=True)
-                self.create_stat_card(stats_frame, "Total Orders", total_orders, "purple").pack(side="left", padx=20, pady=20, expand=True)
-                self.create_stat_card(stats_frame, f"Revenue\n${total_revenue:.2f}", "", "green").pack(side="left", padx=20, pady=20, expand=True)
+                # Display stats with responsive layout (using grid configured above)
+                self.create_stat_card(stats_frame, "Total Users", total_users, "blue").grid(row=0, column=0, padx=10, pady=20, sticky="ew")
+                self.create_stat_card(stats_frame, "Pending Staff", pending_staff, "orange").grid(row=0, column=1, padx=10, pady=20, sticky="ew")
+                self.create_stat_card(stats_frame, "Total Products", total_products, "green").grid(row=0, column=2, padx=10, pady=20, sticky="ew")
+                self.create_stat_card(stats_frame, "Total Orders", total_orders, "purple").grid(row=0, column=3, padx=10, pady=20, sticky="ew")
+                self.create_stat_card(stats_frame, f"Revenue\n${total_revenue:.2f}", "", "green").grid(row=0, column=4, padx=10, pady=20, sticky="ew")
                 
         except Error as e:
             messagebox.showerror("Error", f"Failed to load dashboard: {e}")
@@ -187,7 +234,9 @@ class AdminDashboard:
         ).pack(side="left", padx=10)
     
     def create_stat_card(self, parent, title, value, color):
-        card = ctk.CTkFrame(parent, width=180, height=120)
+        # Responsive stat card with relative sizing
+        card = ctk.CTkFrame(parent)
+        card.configure(height=120)
         card.pack_propagate(False)
         
         ctk.CTkLabel(
@@ -246,29 +295,44 @@ class AdminDashboard:
         )
         approval_menu.pack(side="left", padx=10)
         
-        # Users table
+        # Users table with improved styling
         table_frame = ctk.CTkFrame(self.content_frame)
         table_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
-        # Create Treeview
+        # Create Treeview with better styling
         columns = ("ID", "Name", "Email", "Phone", "Type", "Status", "Registered")
         
-        self.users_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        # Style configuration for Treeview
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("Treeview",
+                       background="#2b2b2b",
+                       foreground="white",
+                       fieldbackground="#2b2b2b",
+                       rowheight=30,
+                       font=("Segoe UI", 11))
+        style.configure("Treeview.Heading",
+                       background="#1f538d",
+                       foreground="white",
+                       font=("Segoe UI", 12, "bold"),
+                       padding=(5, 8))
+        style.map("Treeview",
+                 background=[("selected", "#0066cc")],
+                 foreground=[("selected", "white")])
         
+        self.users_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15, style="Treeview")
+        
+        # Configure columns with better widths
+        column_widths = {"ID": 60, "Name": 200, "Email": 250, "Phone": 130, "Type": 100, "Status": 100, "Registered": 180}
         for col in columns:
-            self.users_tree.heading(col, text=col)
-            if col in ["Name", "Email"]:
-                self.users_tree.column(col, width=180)
-            elif col == "Phone":
-                self.users_tree.column(col, width=120)
-            elif col == "Registered":
-                self.users_tree.column(col, width=150)
-            else:
-                self.users_tree.column(col, width=80)
+            self.users_tree.heading(col, text=col, anchor="w")
+            self.users_tree.column(col, width=column_widths.get(col, 100), anchor="w", minwidth=80)
         
+        # Scrollbar with better styling
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.users_tree.yview)
         self.users_tree.configure(yscrollcommand=scrollbar.set)
         
+        # Pack with expand for responsiveness
         self.users_tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
@@ -300,7 +364,7 @@ class AdminDashboard:
             self.users_tree.delete(item)
         
         try:
-            connection = db_config.create_connection()
+            connection = self.get_db_connection()
             if connection:
                 cursor = connection.cursor(dictionary=True)
                 
@@ -328,9 +392,12 @@ class AdminDashboard:
                     status = "Approved" if user['is_approved'] else "Pending"
                     tag = "pending" if not user['is_approved'] and user['user_type'] == 'staff' else ""
                     
+                    # Construct full_name from first_name and last_name if needed
+                    full_name = user.get('full_name') or f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                    
                     self.users_tree.insert("", "end", values=(
                         user['id'],
-                        user['full_name'],
+                        full_name,
                         user['email'],
                         user['phone_number'] or 'N/A',
                         user['user_type'].capitalize(),
@@ -338,11 +405,10 @@ class AdminDashboard:
                         user['created_at'].strftime('%Y-%m-%d %H:%M')
                     ), tags=(tag,))
                 
-                # Highlight pending staff
-                self.users_tree.tag_configure("pending", background="#ffffcc")
+                # Highlight pending staff with better colors
+                self.users_tree.tag_configure("pending", background="#fff9c4", foreground="#333333")
                 
                 cursor.close()
-                connection.close()
                 
         except Error as e:
             messagebox.showerror("Error", f"Failed to load users: {e}")
@@ -366,7 +432,7 @@ class AdminDashboard:
             return
         
         try:
-            connection = db_config.create_connection()
+            connection = self.get_db_connection()
             if connection:
                 cursor = connection.cursor()
                 cursor.execute(
@@ -375,7 +441,6 @@ class AdminDashboard:
                 )
                 connection.commit()
                 cursor.close()
-                connection.close()
                 
                 messagebox.showinfo("Success", "Staff member approved successfully")
                 self.load_users()
@@ -400,13 +465,12 @@ class AdminDashboard:
             user_id = self.users_tree.item(selected[0])['values'][0]
             
             try:
-                connection = db_config.create_connection()
+                connection = self.get_db_connection()
                 if connection:
                     cursor = connection.cursor()
                     cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
                     connection.commit()
                     cursor.close()
-                    connection.close()
                     
                     messagebox.showinfo("Success", "User deleted successfully")
                     self.load_users()
@@ -443,29 +507,44 @@ class AdminDashboard:
             command=self.load_suppliers
         ).pack(side="left", padx=10)
         
-        # Suppliers table
+        # Suppliers table with improved styling
         table_frame = ctk.CTkFrame(self.content_frame)
         table_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
-        # Create Treeview
+        # Create Treeview with better styling
         columns = ("ID", "Name", "Contact Person", "Email", "Phone", "Address")
         
-        self.suppliers_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        # Style configuration for Treeview (same as users table)
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("Treeview",
+                       background="#2b2b2b",
+                       foreground="white",
+                       fieldbackground="#2b2b2b",
+                       rowheight=30,
+                       font=("Segoe UI", 11))
+        style.configure("Treeview.Heading",
+                       background="#1f538d",
+                       foreground="white",
+                       font=("Segoe UI", 12, "bold"),
+                       padding=(5, 8))
+        style.map("Treeview",
+                 background=[("selected", "#0066cc")],
+                 foreground=[("selected", "white")])
         
+        self.suppliers_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15, style="Treeview")
+        
+        # Configure columns with better widths
+        column_widths = {"ID": 60, "Name": 180, "Contact Person": 180, "Email": 220, "Phone": 130, "Address": 250}
         for col in columns:
-            self.suppliers_tree.heading(col, text=col)
-            if col == "Name":
-                self.suppliers_tree.column(col, width=150)
-            elif col == "Address":
-                self.suppliers_tree.column(col, width=200)
-            elif col in ["Contact Person", "Email"]:
-                self.suppliers_tree.column(col, width=150)
-            else:
-                self.suppliers_tree.column(col, width=80)
+            self.suppliers_tree.heading(col, text=col, anchor="w")
+            self.suppliers_tree.column(col, width=column_widths.get(col, 100), anchor="w", minwidth=80)
         
+        # Scrollbar with better styling
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.suppliers_tree.yview)
         self.suppliers_tree.configure(yscrollcommand=scrollbar.set)
         
+        # Pack with expand for responsiveness
         self.suppliers_tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         
@@ -492,11 +571,16 @@ class AdminDashboard:
         self.load_suppliers()
     
     def load_suppliers(self):
+        # Check if treeview exists
+        if not hasattr(self, 'suppliers_tree') or self.suppliers_tree is None:
+            return
+        
         # Clear existing items
         for item in self.suppliers_tree.get_children():
             self.suppliers_tree.delete(item)
         
         try:
+            # Use fresh connection to get latest data
             connection = db_config.create_connection()
             if connection:
                 cursor = connection.cursor(dictionary=True)
@@ -520,7 +604,7 @@ class AdminDashboard:
             messagebox.showerror("Error", f"Failed to load suppliers: {e}")
     
     def add_supplier(self):
-        AddSupplierDialog(self, self.main_app)
+        AddSupplierDialog(self.main_app, self)
     
     def edit_supplier(self):
         selected = self.suppliers_tree.selection()
@@ -529,7 +613,7 @@ class AdminDashboard:
             return
         
         supplier_id = self.suppliers_tree.item(selected[0])['values'][0]
-        EditSupplierDialog(self, self.main_app, supplier_id)
+        EditSupplierDialog(self.main_app, self, supplier_id)
     
     def delete_supplier(self):
         selected = self.suppliers_tree.selection()
@@ -543,6 +627,7 @@ class AdminDashboard:
             supplier_id = self.suppliers_tree.item(selected[0])['values'][0]
             
             try:
+                # Use a fresh connection to ensure proper deletion
                 connection = db_config.create_connection()
                 if connection:
                     cursor = connection.cursor()
@@ -552,7 +637,8 @@ class AdminDashboard:
                     connection.close()
                     
                     messagebox.showinfo("Success", "Supplier deleted successfully")
-                    self.load_suppliers()
+                    # Refresh supplier list after a brief delay
+                    self.main_app.after(100, self.load_suppliers) 
                     
             except Error as e:
                 messagebox.showerror("Error", f"Failed to delete supplier: {e}")
@@ -560,13 +646,26 @@ class AdminDashboard:
     def show_reports(self):
         self.clear_content()
         
-        # Title
+        # Title and Export button frame
+        title_frame = ctk.CTkFrame(self.content_frame, fg_color="transparent")
+        title_frame.pack(fill="x", padx=20, pady=20)
+        
         title_label = ctk.CTkLabel(
-            self.content_frame,
+            title_frame,
             text="System Reports",
             font=ctk.CTkFont(size=24, weight="bold")
         )
-        title_label.pack(pady=20)
+        title_label.pack(side="left")
+        
+        # Export to Excel button
+        export_button = ctk.CTkButton(
+            title_frame,
+            text="📊 Export to Excel",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            width=150,
+            command=self.export_reports_to_excel
+        )
+        export_button.pack(side="right", padx=10)
         
         # Reports container
         reports_frame = ctk.CTkFrame(self.content_frame)
@@ -583,7 +682,7 @@ class AdminDashboard:
         ).pack(anchor="w", padx=10, pady=10)
         
         try:
-            connection = db_config.create_connection()
+            connection = self.get_db_connection()
             if connection:
                 cursor = connection.cursor(dictionary=True)
                 
@@ -662,7 +761,7 @@ class AdminDashboard:
                 
                 # Top Customers
                 cursor.execute("""
-                    SELECT u.full_name, u.email, COUNT(o.id) as order_count, SUM(o.total_amount) as total_spent
+                    SELECT CONCAT(u.first_name, ' ', u.last_name) as full_name, u.email, COUNT(o.id) as order_count, SUM(o.total_amount) as total_spent
                     FROM users u
                     JOIN orders o ON u.id = o.customer_id
                     WHERE u.user_type = 'customer' AND o.status != 'cancelled'
@@ -692,10 +791,254 @@ class AdminDashboard:
                     ).pack(anchor="w", padx=30, pady=2)
                 
                 cursor.close()
-                connection.close()
                 
         except Error as e:
             messagebox.showerror("Error", f"Failed to load reports: {e}")
+    
+    def export_reports_to_excel(self):
+        """Export all reports to an Excel file"""
+        try:
+            # Ask user where to save the file
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+                title="Save Reports as Excel"
+            )
+            
+            if not filename:
+                return  # User cancelled
+            
+            # Create a new workbook
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)  # Remove default sheet
+            
+            connection = self.get_db_connection()
+            if not connection:
+                messagebox.showerror("Error", "Failed to connect to database")
+                return
+            
+            cursor = connection.cursor(dictionary=True)
+            
+            # Get current user info for metadata
+            current_user_name = f"{self.main_app.current_user.get('first_name', '')} {self.main_app.current_user.get('last_name', '')}".strip()
+            current_user_email = self.main_app.current_user.get('email', 'N/A')
+            access_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # ========== SALES REPORT ==========
+            sales_sheet = wb.create_sheet("Sales Report")
+            
+            # Header with metadata
+            sales_sheet['A1'] = "Smart Inventory Management System - Sales Report"
+            sales_sheet['A1'].font = Font(size=16, bold=True)
+            sales_sheet.merge_cells('A1:D1')
+            
+            sales_sheet['A2'] = f"Generated on: {access_date}"
+            sales_sheet['A3'] = f"Accessed by: {current_user_name} ({current_user_email})"
+            sales_sheet['A4'] = ""  # Empty row
+            
+            row = 5
+            
+            # Total Sales
+            cursor.execute("SELECT COUNT(*) as total_orders, SUM(total_amount) as total_revenue FROM orders WHERE status != 'cancelled'")
+            sales_data = cursor.fetchone()
+            total_orders = sales_data['total_orders'] or 0
+            total_revenue = sales_data['total_revenue'] or 0
+            
+            sales_sheet['A5'] = "Summary"
+            sales_sheet['A5'].font = Font(size=14, bold=True)
+            row = 6
+            sales_sheet[f'A{row}'] = "Total Orders:"
+            sales_sheet[f'B{row}'] = total_orders
+            row += 1
+            sales_sheet[f'A{row}'] = "Total Revenue:"
+            sales_sheet[f'B{row}'] = f"${total_revenue:.2f}"
+            row += 2
+            
+            # Top Products
+            sales_sheet[f'A{row}'] = "Top 5 Products"
+            sales_sheet[f'A{row}'].font = Font(size=14, bold=True)
+            row += 1
+            
+            headers = ["Rank", "Product Name", "Total Sold", "Revenue"]
+            for col, header in enumerate(headers, 1):
+                cell = sales_sheet.cell(row, col, header)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.alignment = Alignment(horizontal="center")
+            
+            row += 1
+            
+            cursor.execute("""
+                SELECT p.name, SUM(oi.quantity) as total_sold, SUM(oi.quantity * oi.price) as revenue
+                FROM order_items oi
+                JOIN products p ON oi.product_id = p.id
+                GROUP BY p.id
+                ORDER BY total_sold DESC
+                LIMIT 5
+            """)
+            top_products = cursor.fetchall()
+            
+            for rank, product in enumerate(top_products, 1):
+                sales_sheet.cell(row, 1, rank)
+                sales_sheet.cell(row, 2, product['name'])
+                sales_sheet.cell(row, 3, product['total_sold'])
+                sales_sheet.cell(row, 4, f"${product['revenue']:.2f}")
+                row += 1
+            
+            # Adjust column widths
+            sales_sheet.column_dimensions['A'].width = 15
+            sales_sheet.column_dimensions['B'].width = 30
+            sales_sheet.column_dimensions['C'].width = 15
+            sales_sheet.column_dimensions['D'].width = 15
+            
+            # ========== INVENTORY REPORT ==========
+            inventory_sheet = wb.create_sheet("Inventory Report")
+            
+            inventory_sheet['A1'] = "Smart Inventory Management System - Inventory Report"
+            inventory_sheet['A1'].font = Font(size=16, bold=True)
+            inventory_sheet.merge_cells('A1:D1')
+            
+            inventory_sheet['A2'] = f"Generated on: {access_date}"
+            inventory_sheet['A3'] = f"Accessed by: {current_user_name} ({current_user_email})"
+            inventory_sheet['A4'] = ""
+            
+            row = 5
+            
+            cursor.execute("SELECT COUNT(*) as total_products, SUM(quantity) as total_stock FROM products")
+            inv_data = cursor.fetchone()
+            total_products = inv_data['total_products'] or 0
+            total_stock = inv_data['total_stock'] or 0
+            
+            cursor.execute("SELECT COUNT(*) as low_stock_count FROM products WHERE quantity <= reorder_level")
+            low_stock_data = cursor.fetchone()
+            low_stock_count = low_stock_data['low_stock_count'] or 0
+            
+            inventory_sheet['A5'] = "Summary"
+            inventory_sheet['A5'].font = Font(size=14, bold=True)
+            row = 6
+            inventory_sheet[f'A{row}'] = "Total Products:"
+            inventory_sheet[f'B{row}'] = total_products
+            row += 1
+            inventory_sheet[f'A{row}'] = "Total Stock Units:"
+            inventory_sheet[f'B{row}'] = total_stock
+            row += 1
+            inventory_sheet[f'A{row}'] = "Low Stock Items:"
+            inventory_sheet[f'B{row}'] = low_stock_count
+            row += 2
+            
+            # Low Stock Items Detail
+            inventory_sheet[f'A{row}'] = "Low Stock Items (Qty <= Reorder Level)"
+            inventory_sheet[f'A{row}'].font = Font(size=14, bold=True)
+            row += 1
+            
+            headers = ["Product ID", "Product Name", "Current Quantity", "Reorder Level", "Status"]
+            for col, header in enumerate(headers, 1):
+                cell = inventory_sheet.cell(row, col, header)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="D32F2F", end_color="D32F2F", fill_type="solid")
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.alignment = Alignment(horizontal="center")
+            
+            row += 1
+            
+            cursor.execute("""
+                SELECT id, name, quantity, reorder_level
+                FROM products
+                WHERE quantity <= reorder_level
+                ORDER BY quantity ASC
+            """)
+            low_stock_items = cursor.fetchall()
+            
+            for item in low_stock_items:
+                inventory_sheet.cell(row, 1, item['id'])
+                inventory_sheet.cell(row, 2, item['name'])
+                inventory_sheet.cell(row, 3, item['quantity'])
+                inventory_sheet.cell(row, 4, item['reorder_level'])
+                inventory_sheet.cell(row, 5, "LOW STOCK")
+                row += 1
+            
+            # Adjust column widths
+            inventory_sheet.column_dimensions['A'].width = 12
+            inventory_sheet.column_dimensions['B'].width = 30
+            inventory_sheet.column_dimensions['C'].width = 18
+            inventory_sheet.column_dimensions['D'].width = 15
+            inventory_sheet.column_dimensions['E'].width = 15
+            
+            # ========== CUSTOMER REPORT ==========
+            customer_sheet = wb.create_sheet("Customer Report")
+            
+            customer_sheet['A1'] = "Smart Inventory Management System - Customer Report"
+            customer_sheet['A1'].font = Font(size=16, bold=True)
+            customer_sheet.merge_cells('A1:E1')
+            
+            customer_sheet['A2'] = f"Generated on: {access_date}"
+            customer_sheet['A3'] = f"Accessed by: {current_user_name} ({current_user_email})"
+            customer_sheet['A4'] = ""
+            
+            row = 5
+            
+            cursor.execute("SELECT COUNT(*) as total_customers FROM users WHERE user_type = 'customer'")
+            customer_data = cursor.fetchone()
+            total_customers = customer_data['total_customers'] or 0
+            
+            customer_sheet['A5'] = "Summary"
+            customer_sheet['A5'].font = Font(size=14, bold=True)
+            row = 6
+            customer_sheet[f'A{row}'] = "Total Customers:"
+            customer_sheet[f'B{row}'] = total_customers
+            row += 2
+            
+            # Top Customers
+            customer_sheet[f'A{row}'] = "Top 5 Customers by Spending"
+            customer_sheet[f'A{row}'].font = Font(size=14, bold=True)
+            row += 1
+            
+            headers = ["Rank", "Customer Name", "Email", "Order Count", "Total Spent"]
+            for col, header in enumerate(headers, 1):
+                cell = customer_sheet.cell(row, col, header)
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.alignment = Alignment(horizontal="center")
+            
+            row += 1
+            
+            cursor.execute("""
+                SELECT CONCAT(u.first_name, ' ', u.last_name) as full_name, u.email, COUNT(o.id) as order_count, SUM(o.total_amount) as total_spent
+                FROM users u
+                JOIN orders o ON u.id = o.customer_id
+                WHERE u.user_type = 'customer' AND o.status != 'cancelled'
+                GROUP BY u.id
+                ORDER BY total_spent DESC
+                LIMIT 5
+            """)
+            top_customers = cursor.fetchall()
+            
+            for rank, customer in enumerate(top_customers, 1):
+                customer_sheet.cell(row, 1, rank)
+                customer_sheet.cell(row, 2, customer['full_name'])
+                customer_sheet.cell(row, 3, customer['email'])
+                customer_sheet.cell(row, 4, customer['order_count'])
+                customer_sheet.cell(row, 5, f"${customer['total_spent']:.2f}")
+                row += 1
+            
+            # Adjust column widths
+            customer_sheet.column_dimensions['A'].width = 8
+            customer_sheet.column_dimensions['B'].width = 25
+            customer_sheet.column_dimensions['C'].width = 30
+            customer_sheet.column_dimensions['D'].width = 15
+            customer_sheet.column_dimensions['E'].width = 15
+            
+            cursor.close()
+            
+            # Save the workbook
+            wb.save(filename)
+            
+            messagebox.showinfo("Success", f"Reports exported successfully to:\n{filename}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export reports: {str(e)}")
     
     def logout(self):
         if messagebox.askyesno("Logout", "Are you sure you want to logout?"):
@@ -703,10 +1046,10 @@ class AdminDashboard:
 
 
 class AddSupplierDialog(ctk.CTkToplevel):
-    def __init__(self, parent, main_app):
-        super().__init__(parent.main_app)
-        self.parent = parent
+    def __init__(self, main_app, admin_dashboard):
+        super().__init__(main_app)
         self.main_app = main_app
+        self.admin_dashboard = admin_dashboard
         
         self.title("Add New Supplier")
         self.geometry("500x500")
@@ -782,9 +1125,25 @@ class AddSupplierDialog(ctk.CTkToplevel):
         phone = self.phone_entry.get().strip()
         address = self.address_entry.get().strip()
         
+        # Form validation
         if not name:
             messagebox.showerror("Error", "Please enter supplier name")
             return
+        
+        # Validate email if provided
+        if email:
+            import re
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            if not re.match(email_pattern, email):
+                messagebox.showerror("Error", "Please enter a valid email address")
+                return
+        
+        # Validate phone if provided
+        if phone:
+            phone_cleaned = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('+', '')
+            if not phone_cleaned.isdigit() or len(phone_cleaned) < 10:
+                messagebox.showerror("Error", "Please enter a valid phone number (at least 10 digits)")
+                return
         
         try:
             connection = db_config.create_connection()
@@ -804,17 +1163,19 @@ class AddSupplierDialog(ctk.CTkToplevel):
                 
                 messagebox.showinfo("Success", "Supplier added successfully!")
                 self.destroy()
-                self.parent.load_suppliers()
+                # Refresh supplier list after dialog closes
+                if hasattr(self.admin_dashboard, 'load_suppliers'):
+                    self.main_app.after(100, self.admin_dashboard.load_suppliers)
                 
         except Error as e:
             messagebox.showerror("Error", f"Failed to add supplier: {e}")
 
 
 class EditSupplierDialog(ctk.CTkToplevel):
-    def __init__(self, parent, main_app, supplier_id):
-        super().__init__(parent.main_app)
-        self.parent = parent
+    def __init__(self, main_app, admin_dashboard, supplier_id):
+        super().__init__(main_app)
         self.main_app = main_app
+        self.admin_dashboard = admin_dashboard
         self.supplier_id = supplier_id
         
         self.title("Edit Supplier")
@@ -915,9 +1276,25 @@ class EditSupplierDialog(ctk.CTkToplevel):
         phone = self.phone_entry.get().strip()
         address = self.address_entry.get().strip()
         
+        # Form validation
         if not name:
             messagebox.showerror("Error", "Please enter supplier name")
             return
+        
+        # Validate email if provided
+        if email:
+            import re
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            if not re.match(email_pattern, email):
+                messagebox.showerror("Error", "Please enter a valid email address")
+                return
+        
+        # Validate phone if provided
+        if phone:
+            phone_cleaned = phone.replace(' ', '').replace('-', '').replace('(', '').replace(')', '').replace('+', '')
+            if not phone_cleaned.isdigit() or len(phone_cleaned) < 10:
+                messagebox.showerror("Error", "Please enter a valid phone number (at least 10 digits)")
+                return
         
         try:
             connection = db_config.create_connection()
@@ -938,7 +1315,9 @@ class EditSupplierDialog(ctk.CTkToplevel):
                 
                 messagebox.showinfo("Success", "Supplier updated successfully!")
                 self.destroy()
-                self.parent.load_suppliers()
+                # Refresh supplier list after dialog closes
+                if hasattr(self.admin_dashboard, 'load_suppliers'):
+                    self.main_app.after(100, self.admin_dashboard.load_suppliers)
                 
         except Error as e:
             messagebox.showerror("Error", f"Failed to update supplier: {e}")

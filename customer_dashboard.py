@@ -128,7 +128,7 @@ class CustomerDashboard:
         )
         category_menu.pack(side="left", padx=10)
         
-        # Products frame with scrollbar
+        # Products frame with scrollbar and dynamic grid
         products_container = ctk.CTkFrame(self.content_frame)
         products_container.pack(fill="both", expand=True, padx=20, pady=10)
         
@@ -137,16 +137,29 @@ class CustomerDashboard:
         scrollbar = ctk.CTkScrollbar(products_container, command=canvas.yview)
         self.products_frame = ctk.CTkFrame(canvas)
         
-        self.products_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+        # Store canvas reference
+        self.products_canvas = canvas
+        self.products_container = products_container
+        
+        def update_scrollregion(event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        
+        self.products_frame.bind("<Configure>", update_scrollregion)
+        
+        def update_canvas_width(event=None):
+            canvas_width = canvas.winfo_width()
+            if canvas_width > 1:
+                canvas_window = canvas.find_all()
+                if canvas_window:
+                    canvas.itemconfig(canvas_window[0], width=canvas_width)
         
         canvas.create_window((0, 0), window=self.products_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        
+        canvas.bind("<Configure>", update_canvas_width)
         
         # Load products
         self.load_products()
@@ -208,7 +221,33 @@ class CustomerDashboard:
                     )
                     no_products_label.pack(pady=50)
                 else:
-                    # Display products in grid
+                    # Calculate dynamic columns based on available width
+                    # Get actual available width
+                    self.products_container.update_idletasks()
+                    self.products_canvas.update_idletasks()
+                    
+                    try:
+                        container_width = self.products_container.winfo_width()
+                        if container_width < 100:
+                            container_width = self.content_frame.winfo_width() - 60  # Account for padding and scrollbar
+                        if container_width < 100:
+                            container_width = self.main_app.winfo_width() - 200
+                        if container_width < 100:
+                            container_width = 1200  # Fallback
+                        
+                        # Card width: 250px card + 20px padding (10px each side)
+                        card_width = 270
+                        num_columns = max(2, int(container_width / card_width))
+                        num_columns = min(num_columns, 8)  # Max 8 columns
+                    except Exception as e:
+                        print(f"Error calculating columns: {e}")
+                        num_columns = 4  # Default fallback
+                    
+                    # Configure grid columns for dynamic layout
+                    for i in range(num_columns):
+                        self.products_frame.grid_columnconfigure(i, weight=1, uniform="product_cols")
+                    
+                    # Display products in dynamic grid
                     row = 0
                     col = 0
                     for product in products:
@@ -216,9 +255,17 @@ class CustomerDashboard:
                         product_card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
                         
                         col += 1
-                        if col > 2:  # 3 columns
+                        if col >= num_columns:
                             col = 0
                             row += 1
+                    
+                    # Update canvas window width to match container
+                    self.products_canvas.update_idletasks()
+                    canvas_width = self.products_canvas.winfo_width()
+                    if canvas_width > 1:
+                        canvas_items = self.products_canvas.find_all()
+                        if canvas_items:
+                            self.products_canvas.itemconfig(canvas_items[0], width=canvas_width)
                 
                 cursor.close()
                 connection.close()
@@ -298,13 +345,25 @@ class CustomerDashboard:
         return card
     
     def add_to_cart(self, product, qty_entry):
+        # Validate quantity input
+        qty_text = qty_entry.get().strip()
+        if not qty_text:
+            messagebox.showerror("Error", "Please enter a quantity")
+            qty_entry.delete(0, "end")
+            qty_entry.insert(0, "1")
+            return
+        
         try:
-            quantity = int(qty_entry.get())
+            quantity = int(qty_text)
             if quantity < 1:
                 messagebox.showerror("Error", "Quantity must be at least 1")
+                qty_entry.delete(0, "end")
+                qty_entry.insert(0, "1")
                 return
             if quantity > product['quantity']:
                 messagebox.showerror("Error", f"Only {product['quantity']} items available in stock")
+                qty_entry.delete(0, "end")
+                qty_entry.insert(0, str(product['quantity']))
                 return
             
             # Check if product already in cart
@@ -434,17 +493,11 @@ class CustomerDashboard:
     
     def place_order(self):
         if not self.cart:
+            messagebox.showwarning("Cart Empty", "Your cart is empty. Add products to cart first.")
             return
         
-        # Get shipping address
-        address_dialog = ctk.CTkInputDialog(
-            text="Enter your shipping address:",
-            title="Shipping Address"
-        )
-        address = address_dialog.get_input()
-        
-        if not address:
-            return
+        # Place order directly without asking for shipping address
+        address = "Not provided"  # Default address
         
         try:
             connection = db_config.create_connection()

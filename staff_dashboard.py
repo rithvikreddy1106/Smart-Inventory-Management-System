@@ -34,7 +34,7 @@ class StaffDashboard:
         # Welcome message
         welcome_label = ctk.CTkLabel(
             header_frame,
-            text=f"Staff Dashboard - Welcome, {self.main_app.current_user['full_name']}",
+            text=f"Staff Dashboard - Welcome, {self.main_app.current_user['first_name']}",
             font=ctk.CTkFont(size=20, weight="bold")
         )
         welcome_label.pack(side="left", padx=20)
@@ -236,16 +236,30 @@ class StaffDashboard:
         scrollbar = ctk.CTkScrollbar(orders_container, command=canvas.yview)
         self.orders_frame = ctk.CTkFrame(canvas)
         
-        self.orders_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+        # Store references
+        self.orders_canvas = canvas
+        self.orders_container = orders_container
         
-        canvas.create_window((0, 0), window=self.orders_frame, anchor="nw")
+        def update_scrollregion(event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        
+        def update_canvas_width(event=None):
+            canvas_width = canvas.winfo_width()
+            if canvas_width > 1:
+                canvas_items = canvas.find_all()
+                if canvas_items:
+                    canvas.itemconfig(canvas_items[0], width=canvas_width)
+        
+        self.orders_frame.bind("<Configure>", update_scrollregion)
+        
+        canvas_window = canvas.create_window((0, 0), window=self.orders_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        
+        # Update canvas window width on resize
+        canvas.bind("<Configure>", update_canvas_width)
         
         self.load_orders()
     
@@ -261,7 +275,7 @@ class StaffDashboard:
                 
                 # Build query
                 query = """
-                    SELECT o.*, u.full_name as customer_name, u.email as customer_email
+                    SELECT o.*, u.first_name as customer_name, u.email as customer_email
                     FROM orders o
                     JOIN users u ON o.customer_id = u.id
                 """
@@ -294,34 +308,41 @@ class StaffDashboard:
     
     def create_order_card(self, order, cursor):
         card = ctk.CTkFrame(self.orders_frame)
-        card.pack(fill="x", padx=10, pady=10)
+        card.pack(fill="x", padx=20, pady=10)
         
-        # Header
-        header_frame = ctk.CTkFrame(card)
-        header_frame.pack(fill="x", padx=10, pady=10)
+        # Header - use grid for better alignment
+        header_frame = ctk.CTkFrame(card, fg_color="transparent")
+        header_frame.pack(fill="x", padx=15, pady=(15, 5))
+        
+        # Order ID and Customer on left
+        left_header = ctk.CTkFrame(header_frame, fg_color="transparent")
+        left_header.pack(side="left", fill="x", expand=True)
         
         ctk.CTkLabel(
-            header_frame,
+            left_header,
             text=f"Order #{order['id']}",
             font=ctk.CTkFont(size=16, weight="bold")
-        ).pack(side="left", padx=10)
+        ).pack(side="left", padx=(0, 20))
         
         ctk.CTkLabel(
-            header_frame,
+            left_header,
             text=f"Customer: {order['customer_name']}",
             font=ctk.CTkFont(size=12)
-        ).pack(side="left", padx=10)
+        ).pack(side="left", padx=(0, 15))
         
         ctk.CTkLabel(
-            header_frame,
+            left_header,
             text=f"Date: {order['order_date'].strftime('%Y-%m-%d %H:%M')}",
-            font=ctk.CTkFont(size=12)
-        ).pack(side="left", padx=10)
+            font=ctk.CTkFont(size=12),
+            text_color="gray"
+        ).pack(side="left")
         
+        # Total on right
         ctk.CTkLabel(
             header_frame,
-            text=f"Total: ${order['total_amount']:.2f}",
-            font=ctk.CTkFont(size=14, weight="bold")
+            text=f"${order['total_amount']:.2f}",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="green"
         ).pack(side="right", padx=10)
         
         # Get order items
@@ -334,63 +355,66 @@ class StaffDashboard:
         )
         items = cursor.fetchall()
         
-        # Items
-        items_frame = ctk.CTkFrame(card)
-        items_frame.pack(fill="x", padx=10, pady=(0, 10))
+        # Items section
+        items_frame = ctk.CTkFrame(card, fg_color="transparent")
+        items_frame.pack(fill="x", padx=15, pady=(5, 10))
         
         for item in items:
-            item_text = f"  • {item['product_name']} x {item['quantity']} - ${item['price'] * item['quantity']:.2f}"
+            item_text = f"• {item['product_name']} x {item['quantity']} - ${item['price'] * item['quantity']:.2f}"
             ctk.CTkLabel(
                 items_frame,
                 text=item_text,
-                font=ctk.CTkFont(size=12)
-            ).pack(anchor="w", padx=10, pady=2)
+                font=ctk.CTkFont(size=12),
+                anchor="w"
+            ).pack(anchor="w", padx=5, pady=2)
         
-        # Shipping address
-        if order['shipping_address']:
-            ctk.CTkLabel(
-                card,
-                text=f"Shipping to: {order['shipping_address']}",
-                font=ctk.CTkFont(size=11),
-                text_color="gray"
-            ).pack(anchor="w", padx=20, pady=(0, 10))
+    
         
-        # Actions
+        # Actions - use grid for better alignment
         actions_frame = ctk.CTkFrame(card, fg_color="transparent")
-        actions_frame.pack(fill="x", padx=10, pady=10)
+        actions_frame.pack(fill="x", padx=15, pady=(5, 15))
         
-        # Current status
+        # Left side - Status
         status_colors = {
             'pending': 'orange',
             'approved': 'green',
-            'rejected': 'red'
+            'rejected': 'red',
         }
         
-        ctk.CTkLabel(
+        status_color = status_colors.get(order['status'], 'gray')
+        status_label = ctk.CTkLabel(
             actions_frame,
             text=f"Status: {order['status'].upper()}",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=status_colors.get(order['status'], 'gray')
-        ).pack(side="left", padx=10)
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=status_color
+        )
+        status_label.pack(side="left", padx=5)
         
-        # Status change buttons
+        # Right side - Action buttons (only show for pending orders)
         if order['status'] == 'pending':
+            button_frame = ctk.CTkFrame(actions_frame, fg_color="transparent")
+            button_frame.pack(side="right", padx=10)
+            
             ctk.CTkButton(
-                actions_frame,
-                text="✓ Approve Order",
-                width=130,
-                fg_color="green",
-                hover_color="darkgreen",
-                command=lambda: self.update_order_status(order['id'], 'approved')
+                button_frame,
+                text="✗ Reject Order",
+                width=120,
+                height=32,
+                fg_color="red",
+                hover_color="darkred",
+                font=ctk.CTkFont(size=12),
+                command=lambda oid=order['id']: self.update_order_status(oid, 'rejected')
             ).pack(side="right", padx=5)
             
             ctk.CTkButton(
-                actions_frame,
-                text="✗ Reject Order",
-                width=120,
-                fg_color="red",
-                hover_color="darkred",
-                command=lambda: self.update_order_status(order['id'], 'rejected')
+                button_frame,
+                text="✓ Approve Order",
+                width=130,
+                height=32,
+                fg_color="green",
+                hover_color="darkgreen",
+                font=ctk.CTkFont(size=12),
+                command=lambda oid=order['id']: self.update_order_status(oid, 'approved')
             ).pack(side="right", padx=5)
     
     def update_order_status(self, order_id, new_status):
@@ -452,30 +476,53 @@ class StaffDashboard:
         
         ctk.CTkButton(search_frame, text="Search", width=100, command=self.load_products).pack(side="left", padx=10)
         
-        # Products table
+        # Products table with improved styling (same as show_users)
         table_frame = ctk.CTkFrame(self.content_frame)
         table_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        # Create Treeview
+
         columns = ("ID", "Name", "Category", "Price", "Quantity", "Reorder Level")
+
+        # ---- Apply Treeview Styling (copied from show_users) ----
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("Treeview",
+                        background="#2b2b2b",
+                        foreground="white",
+                        fieldbackground="#2b2b2b",
+                        rowheight=30,
+                        font=("Segoe UI", 11))
+        style.configure("Treeview.Heading",
+                        background="#1f538d",
+                        foreground="white",
+                        font=("Segoe UI", 12, "bold"),
+                        padding=(5, 8))
+        style.map("Treeview",
+                        background=[("selected", "#0066cc")],
+                        foreground=[("selected", "white")])
         
-        self.products_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+        self.products_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15, style="Treeview")
         
+        # Set column widths similar to user table
+        column_widths = {
+            "ID": 60,
+            "Name": 200,
+            "Category": 150,
+            "Price": 120,
+            "Quantity": 120,
+            "Reorder Level": 150
+        }
+
         for col in columns:
-            self.products_tree.heading(col, text=col)
-            if col == "Name":
-                self.products_tree.column(col, width=200)
-            elif col == "Category":
-                self.products_tree.column(col, width=150)
-            else:
-                self.products_tree.column(col, width=100)
-        
+            self.products_tree.heading(col, text=col, anchor="w")
+            self.products_tree.column(col, width=column_widths[col], anchor="w", minwidth=80)
+
+        # Scrollbar
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.products_tree.yview)
         self.products_tree.configure(yscrollcommand=scrollbar.set)
-        
+
         self.products_tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-        
+
         # Action buttons for selected product
         button_frame = ctk.CTkFrame(self.content_frame)
         button_frame.pack(fill="x", padx=20, pady=10)
@@ -793,14 +840,33 @@ class AddProductDialog(ctk.CTkToplevel):
         quantity = self.quantity_entry.get().strip()
         reorder_level = self.reorder_entry.get().strip()
         
+        # Form validation
         if not name or not price or not quantity:
-            messagebox.showerror("Error", "Please fill in all required fields")
+            messagebox.showerror("Error", "Please fill in all required fields (Name, Price, Quantity)")
+            return
+        
+        if not name.strip():
+            messagebox.showerror("Error", "Product name cannot be empty")
             return
         
         try:
             price = float(price)
+            if price < 0:
+                messagebox.showerror("Error", "Price cannot be negative")
+                return
+            if price == 0:
+                if not messagebox.askyesno("Confirm", "Price is set to 0. Continue?"):
+                    return
+            
             quantity = int(quantity)
-            reorder_level = int(reorder_level)
+            if quantity < 0:
+                messagebox.showerror("Error", "Quantity cannot be negative")
+                return
+            
+            reorder_level = int(reorder_level) if reorder_level else 10
+            if reorder_level < 0:
+                messagebox.showerror("Error", "Reorder level cannot be negative")
+                return
             
             connection = db_config.create_connection()
             if connection:
@@ -993,14 +1059,33 @@ class EditProductDialog(ctk.CTkToplevel):
         quantity = self.quantity_entry.get().strip()
         reorder_level = self.reorder_entry.get().strip()
         
+        # Form validation
         if not name or not price or not quantity:
-            messagebox.showerror("Error", "Please fill in all required fields")
+            messagebox.showerror("Error", "Please fill in all required fields (Name, Price, Quantity)")
+            return
+        
+        if not name.strip():
+            messagebox.showerror("Error", "Product name cannot be empty")
             return
         
         try:
             price = float(price)
+            if price < 0:
+                messagebox.showerror("Error", "Price cannot be negative")
+                return
+            if price == 0:
+                if not messagebox.askyesno("Confirm", "Price is set to 0. Continue?"):
+                    return
+            
             quantity = int(quantity)
-            reorder_level = int(reorder_level)
+            if quantity < 0:
+                messagebox.showerror("Error", "Quantity cannot be negative")
+                return
+            
+            reorder_level = int(reorder_level) if reorder_level else 10
+            if reorder_level < 0:
+                messagebox.showerror("Error", "Reorder level cannot be negative")
+                return
             
             connection = db_config.create_connection()
             if connection:
