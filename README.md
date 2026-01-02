@@ -1,3 +1,5 @@
+^X
+
 # Smart Inventory Management System (SIMS)
 
 A comprehensive inventory management system built with Python, CustomTkinter, and MySQL.
